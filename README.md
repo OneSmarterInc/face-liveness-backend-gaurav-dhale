@@ -1,0 +1,149 @@
+# Kormic Django Backend
+
+## Supported Runtime
+
+Use Python 3.12 for development and deployment of this backend. The project is pinned to the Django 5.2 line (`django>=5.2,<6.0`).
+
+This workstation only has Python 3.13 installed, and the final requirements install also passes there after pinning `psycopg2-binary==2.9.12`. Python 3.13 is not the declared support target yet because the project was generated against Django 5.2 and the team has not validated every dependency and deployment environment on 3.13.
+
+## Clean Setup
+
+```powershell
+cd D:\Kormic\kormic-Django-Backend-Prajval-1
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python manage.py migrate
+python manage.py check
+python manage.py test
+pytest
+```
+
+If `py -3.12` is not installed locally, install Python 3.12 first. Do not assume Python 3.13 support for production until the team explicitly certifies it.
+
+## Environment Variables
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | For AI agents | Existing model API key. Never commit a real value. |
+| `IDENTITY_SESSION_TTL_SECONDS` | Optional | Verification session lifetime in seconds. Defaults to `300`. |
+| `IDENTITY_AES_KEY_B64` / `IDENTITY_AES_KEY` | Production required | Base64 encoded 32-byte AES-256-GCM key, or future key-provider reference. No default production secret is allowed. |
+| `IDENTITY_CURRENT_SIGNING_EPOCH` / `IDENTITY_SIGNING_EPOCH` | Production required | Current central authority signing epoch. Defaults to `1` for development. |
+| `IDENTITY_AUTHORITY_IDENTIFIER` | Production required | Logical signing authority identifier included in proof records. |
+| `IDENTITY_KEY_CUSTODY_BACKEND` | Production required | `software-dev` is development/test only. Production must use an HSM-backed custody implementation. |
+| `IDENTITY_ALLOW_DEV_KEY_CUSTODY` | Development/test only | Enables in-memory SoftwareKeyCustody only when Django is running in debug/test context. Production cannot silently enable it. |
+| `IDENTITY_THROTTLE_RATE` | Optional | DRF throttle rate for identity endpoints. Defaults to `20/min`. |
+
+## Identity Verification API
+
+All endpoints require authenticated student JWT access and confirmed TOTP. They accept JSON only.
+
+### Create Session
+
+`POST /api/identity/sessions/`
+
+Response:
+
+```json
+{
+  "session_id": "uuid",
+  "expires_at": "2026-07-10T22:15:00Z",
+  "challenge_sequence": ["center_face", "turn_left", "turn_right", "blink", "hold_still"],
+  "session_nonce": "server-generated-random-token",
+  "status": "created"
+}
+```
+
+### Complete Session
+
+`POST /api/identity/sessions/{session_id}/complete/`
+
+Request:
+
+```json
+{
+  "session_nonce": "server-generated-random-token",
+  "challenge_results": [
+    {"challenge": "center_face", "passed": true, "completed_at": "2026-07-10T22:10:01Z"},
+    {"challenge": "turn_left", "passed": true, "completed_at": "2026-07-10T22:10:02Z"},
+    {"challenge": "turn_right", "passed": true, "completed_at": "2026-07-10T22:10:03Z"},
+    {"challenge": "blink", "passed": true, "completed_at": "2026-07-10T22:10:04Z"},
+    {"challenge": "hold_still", "passed": true, "completed_at": "2026-07-10T22:10:05Z"}
+  ],
+  "started_at": "2026-07-10T22:10:00Z",
+  "completed_at": "2026-07-10T22:10:06Z",
+  "detector_provider": "vision-camera-face-detector-2.0.6",
+  "platform": "ios",
+  "app_version": "1.0.0",
+  "final_liveness_result": "passed",
+  "failure_reason": null
+}
+```
+
+Response:
+
+```json
+{
+  "session_id": "uuid",
+  "status": "completed",
+  "liveness_result": "passed",
+  "profile_status": "active_liveness_passed",
+  "proof": {
+    "verification_record_hash": "sha3-256-hex",
+    "current_head": "sha3-256-hex",
+    "freshness_timestamp": "2026-07-10T22:10:06Z",
+    "challenge": "center_face,turn_left,turn_right,blink,hold_still",
+    "epoch": 1,
+    "signature": "base64-ml-dsa-signature"
+  }
+}
+```
+
+### Session Status
+
+`GET /api/identity/sessions/{session_id}/`
+
+Returns the requesting student's own session. Cross-user session access returns a generic not-found response.
+
+### Device Biometrics Preference
+
+`POST /api/identity/device-biometrics/`
+
+Request:
+
+```json
+{"status": "enabled", "platform": "ios", "app_version": "1.0.0"}
+```
+
+Allowed statuses are `enabled`, `skipped`, and `unavailable`. This endpoint stores preference/status only.
+
+## Frontend Integration Sequence
+
+1. Call `POST /api/identity/sessions/` after the student reaches the liveness flow.
+2. Run on-device active liveness using exactly this challenge order: `center_face`, `turn_left`, `turn_right`, `blink`, `hold_still`.
+3. Send normalized metadata to `POST /api/identity/sessions/{session_id}/complete/` with the returned `session_nonce`.
+4. Treat `profile_status: active_liveness_passed` as an on-device liveness signal only.
+5. Optionally call `POST /api/identity/device-biometrics/` for device biometric preference. Do not send biometric templates or identifiers.
+
+## Cryptography and Trust Boundary
+
+- Result payloads are canonicalized, hashed with SHA3-256, then encrypted as AES-256-GCM envelopes: `nonce`, `ciphertext`, `tag`.
+- Proof records are signed server-side with ML-DSA-44 using `dilithium_py.ml_dsa.ML_DSA_44`.
+- Each proof stores its signing epoch. Verification resolves the public key by epoch.
+- In-memory `SoftwareKeyCustody` is development/test only and does not survive process restarts unless key material is loaded by a future persistent authority/HSM backend.
+- Production must provide an HSM-backed custody backend and AES key/key-provider reference.
+- No client-side post-quantum cryptography is required or expected.
+
+## No-Biometric-Media Policy
+
+Identity endpoints must never receive or persist raw photos, video, frames, landmarks, face geometry, eye-open probabilities, Face ID templates, biometric templates, or biometric identifiers. The backend accepts normalized liveness metadata only.
+
+On-device active liveness is not certified identity proof. This flow does not set `StudentProfile.verified = true`; certified identity proof remains a future provider-backed process.
+
+## Known Limitations
+
+- `SoftwareKeyCustody` is process-local and loses keys on restart.
+- HSM-backed custody is a required production follow-up.
+- Session challenge order is fixed for first frontend integration.
+- SQLite is the local default database. PostgreSQL deployment settings are not yet wired through `DATABASE_URL`.
