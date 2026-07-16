@@ -13,14 +13,26 @@ from identity_verification.crypto.proof_tokens import build_current_head, sha3_2
 from identity_verification.models import IdentityVerificationProof, IdentityVerificationResult, IdentityVerificationSession
 from identity_verification.serializers import IdentityCompletionSerializer
 
-CHALLENGE_SEQUENCE = ["center_face", "turn_left", "turn_right", "blink", "hold_still"]
+import random
+
+CHALLENGES = [
+    "center_face",
+    "turn_left",
+    "turn_right",
+    "blink",
+    "hold_still",
+]
 
 
 def create_identity_session(account: Account) -> IdentityVerificationSession:
     ttl_seconds = int(getattr(settings, "IDENTITY_SESSION_TTL_SECONDS", 300))
+
+    challenge_sequence = CHALLENGES.copy()
+    random.shuffle(challenge_sequence)
+
     return IdentityVerificationSession.objects.create(
         account=account,
-        challenge_sequence=list(CHALLENGE_SEQUENCE),
+        challenge_sequence=challenge_sequence,
         expires_at=timezone.now() + timezone.timedelta(seconds=ttl_seconds),
     )
 

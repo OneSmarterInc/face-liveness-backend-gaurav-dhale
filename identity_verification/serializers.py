@@ -55,7 +55,7 @@ class IdentityCompletionSerializer(serializers.Serializer):
     started_at = serializers.DateTimeField()
     completed_at = serializers.DateTimeField()
     detector_provider = serializers.CharField(max_length=120)
-    platform = serializers.ChoiceField(choices=["ios", "android"])
+    platform = serializers.ChoiceField(choices=["ios", "android", "web"])
     app_version = serializers.CharField(max_length=80)
     final_liveness_result = serializers.ChoiceField(choices=IdentityVerificationResult.FinalResult.choices)
     failure_reason = serializers.CharField(max_length=120, allow_blank=True, allow_null=True, required=False)
@@ -111,7 +111,7 @@ class IdentityCompletionSerializer(serializers.Serializer):
 
 class DeviceBiometricPreferenceSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=DeviceBiometricPreference.Status.choices)
-    platform = serializers.ChoiceField(choices=["ios", "android"])
+    platform = serializers.ChoiceField(choices=["ios", "android", "web"])
     app_version = serializers.CharField(max_length=80)
 
     def validate(self, attrs):
