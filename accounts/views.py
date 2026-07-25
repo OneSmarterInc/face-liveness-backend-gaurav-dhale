@@ -273,116 +273,116 @@ class CurrentUserView(APIView):
         return Response(serialize_user(request.user), status=status.HTTP_200_OK)
 
 
-###-------------------------- Face Recognition - GRD --------------------------###
+# ###-------------------------- Face Recognition - GRD --------------------------###
 
-from .AUTH_SERVICES_GRD.services import get_single_face_embedding, FaceDetectionError,MODEL_NAME
-from .AUTH_SERVICES_GRD.crypto import encrypt_embedding
-from .serializers import RegisterFaceSerializer, VerifyFaceSerializer
-from .models import FaceImage,FaceEmbedding, Account
-from PIL import Image
+# from .AUTH_SERVICES_GRD.services import get_single_face_embedding, FaceDetectionError,MODEL_NAME
+# from .AUTH_SERVICES_GRD.crypto import encrypt_embedding
+# from .serializers import RegisterFaceSerializer, VerifyFaceSerializer
+# from .models import FaceImage,FaceEmbedding, Account
+# from PIL import Image
 
-class RegisterFaceView(APIView):
+# class RegisterFaceView(APIView):
 
-    permission_classes = [IsAuthenticated]
+#     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        serializer = RegisterFaceSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+#     def post(self, request):
+#         serializer = RegisterFaceSerializer(data=request.data)
+#         if not serializer.is_valid():
+#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        image_file = serializer.validated_data["image"]
+#         image_file = serializer.validated_data["image"]
 
-        try:
-            embedding, bbox = get_single_face_embedding(image_file)
-        except FaceDetectionError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+#         try:
+#             embedding, bbox = get_single_face_embedding(image_file)
+#         except FaceDetectionError as e:
+#             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = request.user
-        user = Account.objects.filter(user=user).first()
-        if not user: 
-            return Response(status=status.HTTP_404_NOT_FOUND)
-        image_file.seek(0)
-        with Image.open(image_file) as pil_img:
-            width, height = pil_img.size
-        image_file.seek(0)
+#         user = request.user
+#         user = Account.objects.filter(user=user).first()
+#         if not user: 
+#             return Response(status=status.HTTP_404_NOT_FOUND)
+#         image_file.seek(0)
+#         with Image.open(image_file) as pil_img:
+#             width, height = pil_img.size
+#         image_file.seek(0)
 
-        with transaction.atomic():
-            face_image, _ = FaceImage.objects.update_or_create(
-                user=user,
-                defaults={
-                    "image": image_file,
-                    "width": width,
-                    "height": height,
-                    "file_size": image_file.size,
-                    "mime_type": image_file.content_type or "application/octet-stream",
-                    "is_registration": True,
-                },
-            )
+#         with transaction.atomic():
+#             face_image, _ = FaceImage.objects.update_or_create(
+#                 user=user,
+#                 defaults={
+#                     "image": image_file,
+#                     "width": width,
+#                     "height": height,
+#                     "file_size": image_file.size,
+#                     "mime_type": image_file.content_type or "application/octet-stream",
+#                     "is_registration": True,
+#                 },
+#             )
 
-            FaceEmbedding.objects.create(
-                user=user,
-                embedding=encrypt_embedding(embedding, str(user.id)),
-                model_name=MODEL_NAME,
-            )
+#             FaceEmbedding.objects.create(
+#                 user=user,
+#                 embedding=encrypt_embedding(embedding, str(user.id)),
+#                 model_name=MODEL_NAME,
+#             )
 
-        return Response(
-            {"detail": "Face registered successfully"},
-            status=status.HTTP_201_CREATED,
-        )
+#         return Response(
+#             {"detail": "Face registered successfully"},
+#             status=status.HTTP_201_CREATED,
+#         )
 
-from .AUTH_SERVICES_GRD.crypto import EmbeddingCryptoError
-from .AUTH_SERVICES_GRD.services import verify_face, FACE_VERIFICATION_THRESHOLD, NoRegisteredFaceError
-from .models import FaceVerificationLog
+# from .AUTH_SERVICES_GRD.crypto import EmbeddingCryptoError
+# from .AUTH_SERVICES_GRD.services import verify_face, FACE_VERIFICATION_THRESHOLD, NoRegisteredFaceError
+# from .models import FaceVerificationLog
 
-def get_client_ip(request):
-    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR")
+# def get_client_ip(request):
+#     forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+#     if forwarded_for:
+#         return forwarded_for.split(",")[0].strip()
+#     return request.META.get("REMOTE_ADDR")
 
-class VerifyFaceView(APIView):
+# class VerifyFaceView(APIView):
 
-    permission_classes = [IsAuthenticated]
+#     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
-        serializer = VerifyFaceSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+#     def post(self, request):
+#         serializer = VerifyFaceSerializer(data=request.data)
+#         if not serializer.is_valid():
+#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        image_file = serializer.validated_data["image"]
-        user = request.user
-        user = Account.objects.filter(user=user).first()
-        if not user: 
-            return Response(status=status.HTTP_404_NOT_FOUND)
+#         image_file = serializer.validated_data["image"]
+#         user = request.user
+#         user = Account.objects.filter(user=user).first()
+#         if not user: 
+#             return Response(status=status.HTTP_404_NOT_FOUND)
 
-        try:
-            result = verify_face(user, image_file)
-        except NoRegisteredFaceError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except FaceDetectionError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except EmbeddingCryptoError:
-            return Response(
-                {"detail": "Could not verify face; please re-register"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+#         try:
+#             result = verify_face(user, image_file)
+#         except NoRegisteredFaceError as e:
+#             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+#         except FaceDetectionError as e:
+#             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+#         except EmbeddingCryptoError:
+#             return Response(
+#                 {"detail": "Could not verify face; please re-register"},
+#                 status=status.HTTP_400_BAD_REQUEST,
+#             )
 
-        score = result["score"]
-        passed = score >= FACE_VERIFICATION_THRESHOLD
+#         score = result["score"]
+#         passed = score >= FACE_VERIFICATION_THRESHOLD
 
-        FaceVerificationLog.objects.create(
-            user=user,
-            similarity_score=score,
-            passed=passed,
-            ip_address=get_client_ip(request),
-            device=request.META.get("HTTP_USER_AGENT", ""),
-        )
+#         FaceVerificationLog.objects.create(
+#             user=user,
+#             similarity_score=score,
+#             passed=passed,
+#             ip_address=get_client_ip(request),
+#             device=request.META.get("HTTP_USER_AGENT", ""),
+#         )
 
-        response_status = status.HTTP_200_OK if passed else status.HTTP_401_UNAUTHORIZED
-        return Response(
-            {
-                "verified": passed,
-                "similarity_score": round(score, 4),
-            },
-            status=response_status,
-        )
+#         response_status = status.HTTP_200_OK if passed else status.HTTP_401_UNAUTHORIZED
+#         return Response(
+#             {
+#                 "verified": passed,
+#                 "similarity_score": round(score, 4),
+#             },
+#             status=response_status,
+#         )

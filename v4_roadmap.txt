@@ -1,0 +1,60 @@
+
+Phase A — Freeze the API contract
+1. Finalize the evidence payload.
+2. Document every field and validation rule.
+
+Phase B — Backend liveness engine
+1. Schema validation.
+2. Session validation.
+3. Telemetry validation.
+4. Challenge validation.
+5. Replay detection.
+6. Liveness verdict.
+
+Phase C — Recognition
+1. Decode Base64 image.
+2. Face detection and alignment.
+3. InsightFace embedding generation.
+4. Discard image from memory.
+5. Store or compare embedding.
+
+Phase D — Cleanup
+1. Remove temporary frontend artifacts.
+2. Remove debug logs.
+3. Tune telemetry sampling.
+4. Optimize payload size.
+
+
+############# Layer wise breakdown
+Layer 1 — Contract
+    Payload schema
+    Serializers
+    Validation
+    Versioning
+
+Layer 2 — Verification Engine
+    Session validation
+    Telemetry validation
+    Challenge validator
+    Replay detector
+    Liveness engine
+
+Layer 3 — Recognition Engine
+    Image decoder
+    Face alignment
+    InsightFace
+    Embedding generation
+    Similarity engine
+
+Layer 4 — Persistence
+    FaceEmbedding
+    VerificationAttempt
+    Audit logs
+    Session history
+
+Layer 5 — API
+    Register
+    Verify
+    Status
+    Re-authenticate
+    Admin endpoints

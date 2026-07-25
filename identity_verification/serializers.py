@@ -8,13 +8,47 @@ from rest_framework import serializers
 
 from identity_verification.models import DeviceBiometricPreference, IdentityVerificationResult, IdentityVerificationSession
 
-ALLOWED_CHALLENGES = ["center_face", "turn_left", "turn_right", "blink", "hold_still"]
+CURRENT_SCHEMA_VERSION = 1
+
+SUPPORTED_PLATFORMS = [
+    "android",
+    "ios",
+    "web",
+]
+
+SUPPORTED_DETECTORS = [
+    "MediaPipe",
+]
+
+SUPPORTED_CHALLENGES = [
+    "center_face",
+    "turn_left",
+    "turn_right",
+    "blink",
+    "hold_still",
+]
+
 BANNED_FIELDS = {
-    "file", "files", "image", "images", "photo", "photos", "video", "videos", "frame", "frames",
-    "landmark", "landmarks", "face_geometry", "eye_open_probability", "eye_probabilities",
-    "biometric_template", "biometric_identifier", "face_id_template", "device_biometric_id",
-    "raw_detection", "raw_detections", "face", "faces",
+    "file",
+    "files",
+    "photo",
+    "photos",
+    "video",
+    "videos",
+    "frame",
+    "frames",
+    "raw_detection",
+    "raw_detections",
+    "face_geometry",
+    "landmarks",
+    "face",
+    "faces",
+    "embedding",
+    "biometric_template",
+    "face_template",
+    "device_biometric_id",
 }
+
 
 
 class IdentitySessionSerializer(serializers.ModelSerializer):
@@ -34,7 +68,7 @@ class IdentitySessionDetailSerializer(serializers.ModelSerializer):
 
 
 class ChallengeResultSerializer(serializers.Serializer):
-    challenge = serializers.ChoiceField(choices=ALLOWED_CHALLENGES)
+    challenge = serializers.ChoiceField(choices=SUPPORTED_CHALLENGES)
     passed = serializers.BooleanField()
     completed_at = serializers.DateTimeField()
 
@@ -47,66 +81,6 @@ class ChallengeResultSerializer(serializers.Serializer):
             if unexpected:
                 raise serializers.ValidationError({"unexpected_fields": sorted(unexpected)})
         return super().to_internal_value(data)
-
-
-class IdentityCompletionSerializer(serializers.Serializer):
-    session_nonce = serializers.CharField(max_length=128)
-    challenge_results = ChallengeResultSerializer(many=True)
-    started_at = serializers.DateTimeField()
-    completed_at = serializers.DateTimeField()
-    detector_provider = serializers.CharField(max_length=120)
-    platform = serializers.ChoiceField(choices=["ios", "android", "web"])
-    app_version = serializers.CharField(max_length=80)
-    final_liveness_result = serializers.ChoiceField(choices=IdentityVerificationResult.FinalResult.choices)
-    failure_reason = serializers.CharField(max_length=120, allow_blank=True, allow_null=True, required=False)
-
-    def validate(self, attrs):
-        unexpected = set(self.initial_data.keys()) - set(self.fields.keys())
-        banned = sorted((set(self.initial_data.keys()) | unexpected) & BANNED_FIELDS)
-        if banned:
-            raise serializers.ValidationError({"biometric_payload": f"Raw biometric/media fields are not accepted: {', '.join(banned)}"})
-        if unexpected:
-            raise serializers.ValidationError({"unexpected_fields": sorted(unexpected)})
-
-        session: IdentityVerificationSession = self.context["session"]
-        now = timezone.now()
-        if not hmac.compare_digest(attrs["session_nonce"], session.session_nonce):
-            raise serializers.ValidationError({"session_nonce": "Invalid session nonce."})
-        if session.expires_at <= now:
-            raise serializers.ValidationError({"session": "Verification session has expired."})
-        terminal_states = [
-            IdentityVerificationSession.Status.COMPLETED,
-            IdentityVerificationSession.Status.FAILED,
-            IdentityVerificationSession.Status.CANCELED,
-            IdentityVerificationSession.Status.EXPIRED,
-        ]
-        if session.consumed_at or session.status in terminal_states:
-            raise serializers.ValidationError({"session": "Verification session is no longer completable."})
-
-        started_at = attrs["started_at"]
-        completed_at = attrs["completed_at"]
-        if completed_at < started_at:
-            raise serializers.ValidationError({"completed_at": "Completion time must be after start time."})
-        if started_at < session.created_at:
-            raise serializers.ValidationError({"started_at": "Start time must be within the issued session window."})
-        if completed_at > now + timezone.timedelta(minutes=1):
-            raise serializers.ValidationError({"completed_at": "Completion time is outside the acceptable clock window."})
-        if completed_at > session.expires_at:
-            raise serializers.ValidationError({"completed_at": "Completion time must be before the session expires."})
-
-        results: List[Dict[str, Any]] = attrs["challenge_results"]
-        challenges = [item["challenge"] for item in results]
-        if challenges != session.challenge_sequence:
-            raise serializers.ValidationError({"challenge_results": "Challenge results must exactly match the issued challenge sequence."})
-        if len(challenges) != len(set(challenges)):
-            raise serializers.ValidationError({"challenge_results": "Duplicate challenge results are not accepted."})
-        if sorted(challenges) != sorted(ALLOWED_CHALLENGES):
-            raise serializers.ValidationError({"challenge_results": "All issued challenges are required."})
-        if attrs["final_liveness_result"] == IdentityVerificationResult.FinalResult.PASSED:
-            failed = [item["challenge"] for item in results if not item["passed"]]
-            if failed:
-                raise serializers.ValidationError({"final_liveness_result": "Every challenge must pass for a passed liveness result."})
-        return attrs
 
 
 class DeviceBiometricPreferenceSerializer(serializers.Serializer):
@@ -123,3 +97,175 @@ class DeviceBiometricPreferenceSerializer(serializers.Serializer):
             raise serializers.ValidationError({"unexpected_fields": sorted(unexpected)})
         return attrs
 
+
+# ----------------------------------------------------------------------
+# Session
+# ----------------------------------------------------------------------
+
+class SessionSerializer(serializers.Serializer):
+    session_nonce = serializers.CharField(max_length=128)
+    verification_id = serializers.UUIDField(required=False, allow_null=True)
+    started_at = serializers.DateTimeField()
+    completed_at = serializers.DateTimeField()
+
+
+# ----------------------------------------------------------------------
+# Client
+# ----------------------------------------------------------------------
+
+class ClientSerializer(serializers.Serializer):
+    platform = serializers.ChoiceField(SUPPORTED_PLATFORMS)
+    app_version = serializers.CharField(max_length=40)
+    browser = serializers.CharField(max_length=120)
+    os = serializers.CharField(max_length=120)
+
+
+# ----------------------------------------------------------------------
+# Camera
+# ----------------------------------------------------------------------
+
+class CameraResolutionSerializer(serializers.Serializer):
+    width = serializers.IntegerField(min_value=1)
+    height = serializers.IntegerField(min_value=1)
+
+
+class CameraSerializer(serializers.Serializer):
+    resolution = CameraResolutionSerializer()
+    fps = serializers.FloatField(min_value=1)
+
+
+# ----------------------------------------------------------------------
+# Detector
+# ----------------------------------------------------------------------
+
+class DetectorSerializer(serializers.Serializer):
+    provider = serializers.ChoiceField(SUPPORTED_DETECTORS)
+    version = serializers.CharField(max_length=40)
+
+
+# ----------------------------------------------------------------------
+# Challenge
+# ----------------------------------------------------------------------
+
+class ChallengeEventSerializer(serializers.Serializer):
+    challenge = serializers.ChoiceField(SUPPORTED_CHALLENGES)
+    started_at = serializers.DateTimeField()
+    completed_at = serializers.DateTimeField()
+
+    def validate(self, attrs):
+        if attrs["completed_at"] < attrs["started_at"]:
+            raise serializers.ValidationError(
+                "completed_at must be after started_at."
+            )
+        return attrs
+
+
+# ----------------------------------------------------------------------
+# Telemetry
+# ----------------------------------------------------------------------
+
+class TelemetrySerializer(serializers.Serializer):
+    t = serializers.IntegerField(min_value=0)
+
+    yaw = serializers.FloatField(min_value=-90, max_value=90)
+    pitch = serializers.FloatField(min_value=-90, max_value=90)
+    roll = serializers.FloatField(min_value=-180, max_value=180)
+
+    ear_left = serializers.FloatField(min_value=0, max_value=1)
+    ear_right = serializers.FloatField(min_value=0, max_value=1)
+
+    face_detected = serializers.BooleanField()
+
+    face_confidence = serializers.FloatField(
+        min_value=0,
+        max_value=1,
+        required=False,
+        default=1,
+    )
+
+
+# ----------------------------------------------------------------------
+# Capture
+# ----------------------------------------------------------------------
+
+class CaptureSerializer(serializers.Serializer):
+    frame_timestamp = serializers.DateTimeField()
+
+    quality_score = serializers.FloatField(
+        min_value=0,
+        max_value=100,
+    )
+
+    sharpness = serializers.FloatField(min_value=0)
+
+    brightness = serializers.FloatField(
+        min_value=0,
+        max_value=255,
+    )
+
+    image = serializers.CharField()
+
+
+# ----------------------------------------------------------------------
+# Final Payload
+# ----------------------------------------------------------------------
+
+class IdentityCompletionSerializer(serializers.Serializer):
+    schema_version = serializers.IntegerField(default=CURRENT_SCHEMA_VERSION)
+
+    session = SessionSerializer()
+
+    client = ClientSerializer()
+
+    camera = CameraSerializer()
+
+    detector = DetectorSerializer()
+
+    challenge_sequence = serializers.ListField(
+        child=serializers.ChoiceField(SUPPORTED_CHALLENGES),
+        allow_empty=False,
+    )
+
+    challenge_events = ChallengeEventSerializer(many=True)
+
+    telemetry = TelemetrySerializer(
+        many=True,
+        allow_empty=False,
+    )
+
+    capture = CaptureSerializer()
+
+    # --------------------------------------------------
+
+    def validate(self, attrs):
+
+        unexpected = set(self.initial_data.keys()) - set(self.fields.keys())
+
+        banned = sorted(
+            set(self.initial_data.keys()) & BANNED_FIELDS
+        )
+
+        if banned:
+            raise serializers.ValidationError(
+                {
+                    "biometric_payload":
+                        f"Raw biometric fields are not accepted: {', '.join(banned)}"
+                }
+            )
+
+        if unexpected:
+            raise serializers.ValidationError(
+                {
+                    "unexpected_fields": sorted(unexpected)
+                }
+            )
+
+        if attrs["schema_version"] != CURRENT_SCHEMA_VERSION:
+            raise serializers.ValidationError(
+                {
+                    "schema_version":
+                        "Unsupported payload schema."
+                }
+            )
+
+        return attrs

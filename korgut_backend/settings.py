@@ -234,3 +234,38 @@ CORS_ALLOWED_ORIGINS = [
 
 CORS_ALLOW_CREDENTIALS = True
 
+IDENTITY_VERIFICATION = {
+
+    "yaw": {
+        "left": -15,
+        "right": 15,
+        "center": 8,
+    },
+
+    "blink": {
+        "ear_threshold": 0.21,
+    },
+
+    "liveness": {
+        "minimum_score": 0.75,
+    },
+
+    "turn": {
+        "minimum_stable_frames": 3,
+    },
+
+    "center_face": {
+        "minimum_ratio": 0.80,
+        "minimum_consecutive_frames": 8,
+    },
+
+    "hold_still": {
+        "max_yaw_range": 8,
+        "max_pitch_range": 8,
+        "max_roll_range": 10,
+
+        "max_frame_delta_yaw": 2,
+        "max_frame_delta_pitch": 2,
+        "max_frame_delta_roll": 2,
+    },
+}

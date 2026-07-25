@@ -14,10 +14,10 @@ urlpatterns = [
     path("me/", views.CurrentUserView.as_view(), name="auth_me"),
 ]
 
-###-------------------------- Face Recognition - GRD --------------------------###
+# ###-------------------------- Face Recognition - GRD --------------------------###
 
 
-urlpatterns.extend([
-    path("register-face/", views.RegisterFaceView.as_view(), name="register-face"),
-    path("verify-face/", views.VerifyFaceView.as_view(), name="verify-face"),
-])
+# urlpatterns.extend([
+#     path("register-face/", views.RegisterFaceView.as_view(), name="register-face"),
+#     path("verify-face/", views.VerifyFaceView.as_view(), name="verify-face"),
+# ])

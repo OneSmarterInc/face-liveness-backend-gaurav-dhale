@@ -65,6 +65,16 @@ class IdentityVerificationResult(models.Model):
     received_at = models.DateTimeField(auto_now_add=True)
     payload_hash = models.CharField(max_length=128, unique=True, db_index=True)
 
+    evidence_fingerprint = models.CharField(
+        max_length=128,
+        db_index=True,
+        default=""
+    )
+
+    replay_detected = models.BooleanField(
+        default=False,
+    )
+
     class Meta:
         ordering = ["-received_at"]
 
@@ -118,3 +128,70 @@ class DeviceBiometricPreference(models.Model):
         return f"DeviceBiometricPreference({self.account_id}, {self.status})"
 
 
+###-------------------------- Face Recognition - GRD --------------------------###
+
+class FaceEmbedding(models.Model):
+
+    user = models.ForeignKey(Account, on_delete=models.CASCADE)
+
+    embedding = models.BinaryField()
+
+    model_name = models.CharField(max_length=100)
+
+    model_version = models.CharField(max_length=30)
+
+    embedding_dimension = models.PositiveSmallIntegerField(default=512)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    updated_at = models.DateTimeField(auto_now=True)
+
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+class FaceVerificationLog(models.Model):
+    VERIFICATION_REASON_CHOICES = [
+        ("LOGIN", "Login"),
+        ("REAUTH", "Reauthentication"),
+        ("RESCAN", "Face Rescan"),
+        ("VERIFY", "Verification"),
+    ]
+    user = models.ForeignKey(
+        Account,
+        on_delete=models.CASCADE
+    )
+
+    reason = models.CharField(
+        max_length=20,
+        choices=VERIFICATION_REASON_CHOICES,
+        default="VERIFY",
+    )
+
+    similarity_score = models.FloatField()
+
+    passed = models.BooleanField()
+
+    captured_at = models.DateTimeField(auto_now_add=True)
+
+    ip_address = models.GenericIPAddressField(
+        null=True,
+        blank=True
+    )
+
+    device = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    liveness_score = models.FloatField()
+
+    liveness_passed = models.BooleanField()
+
+    challenge_sequence = models.JSONField()
+
+    detector_provider = models.CharField(max_length=120)
+
+    detector_version = models.CharField(max_length=30)
+
+    class Meta:
+        ordering = ["-captured_at"]
