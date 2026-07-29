@@ -5,7 +5,14 @@ import numpy as np
 from insightface.app import FaceAnalysis
 from sklearn.metrics.pairwise import cosine_similarity
 
-logger = logging.getLogger("security")
+# Model loading is a server resource-lifecycle event, not a security event.
+server_logger = logging.getLogger("server")
+
+# No HTTP request is available this deep in the face-matching layer, so the
+# request-scoped fields the "verbose" formatter expects are filled with
+# placeholders rather than threaded down from the view.
+security_logger = logging.getLogger("security")
+_NO_REQUEST_CONTEXT = {"path": "AUTH_SERVICES_GRD.services.verify_face", "method": "INTERNAL", "duration": 0.0, "ip": "-"}
 
 MODEL_NAME = "buffalo_l"  # default insightface model pack used by FaceAnalysis()
 EMBEDDING_DIM = 512
@@ -27,7 +34,7 @@ def get_face_app():
 
     global _face_app
     if _face_app is None:
-        logger.info("Loading FaceAnalysis (%s) - first request in this process", MODEL_NAME)
+        server_logger.info("Loading FaceAnalysis (%s) - first request in this process", MODEL_NAME)
         _face_app = FaceAnalysis(name=MODEL_NAME)
         _face_app.prepare(ctx_id=0, det_size=(640, 640))
     return _face_app
@@ -68,6 +75,10 @@ def verify_face(user, image_file):
         .first()
     )
     if not stored_embedding:
+        security_logger.warning(
+            "Face verification attempted with no registered face",
+            extra={**_NO_REQUEST_CONTEXT, "status": "no_registered_face", "user": user.id},
+        )
         raise NoRegisteredFaceError("No registered face found for this user")
 
     probe_embedding, bbox = get_single_face_embedding(image_file)
@@ -78,5 +89,11 @@ def verify_face(user, image_file):
 
     probe_vector = probe_embedding.reshape(1, -1).astype(np.float32)
     score = float(cosine_similarity(stored_vector, probe_vector)[0][0])
+
+    if score < FACE_VERIFICATION_THRESHOLD:
+        security_logger.warning(
+            "Face verification failed (score below threshold)",
+            extra={**_NO_REQUEST_CONTEXT, "status": "verification_failed", "user": user.id},
+        )
 
     return {"score": score, "bbox": bbox}

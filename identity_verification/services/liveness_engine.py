@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Dict, List
@@ -7,6 +9,8 @@ from typing import Dict, List
 from .exceptions import IdentityVerificationError
 
 from statistics import median, variance
+
+app_logger = logging.getLogger("app")
 
 class LivenessDecisionError(IdentityVerificationError):
     """Raised when liveness evaluation cannot be completed."""
@@ -881,7 +885,23 @@ class LivenessEngine:
             ],
             "metrics": telemetry_summary,
         }
-        print(res)
+
+        app_logger.info(
+            "Liveness engine evaluation: score=%s passed=%s",
+            res["score"],
+            res["passed"],
+            extra={
+                # No HTTP request is available this deep in the pipeline, so the
+                # request-scoped fields the "verbose" formatter expects are
+                # filled with placeholders rather than threaded down from the view.
+                "path": "identity_verification.services.liveness_engine.LivenessEngine.evaluate",
+                "method": "INTERNAL",
+                "status": "passed" if res["passed"] else "failed",
+                "duration": 0.0,
+                "ip": "-",
+                "user": "-",
+            },
+        )
 
         return res
 

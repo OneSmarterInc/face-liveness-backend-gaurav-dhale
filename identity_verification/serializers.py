@@ -6,7 +6,12 @@ from typing import Any, Dict, List
 from django.utils import timezone
 from rest_framework import serializers
 
-from identity_verification.models import DeviceBiometricPreference, IdentityVerificationResult, IdentityVerificationSession
+from identity_verification.models import (
+    DeviceBiometricPreference,
+    FaceVerificationLog,
+    IdentityVerificationResult,
+    IdentityVerificationSession,
+)
 
 CURRENT_SCHEMA_VERSION = 1
 
@@ -268,4 +273,35 @@ class IdentityCompletionSerializer(serializers.Serializer):
                 }
             )
 
+        return attrs
+
+
+
+class FaceCaptureSerializer(serializers.Serializer):
+    image = serializers.CharField()
+
+
+class RegisterFaceSerializer(serializers.Serializer):
+    session_id = serializers.UUIDField()
+    capture = FaceCaptureSerializer()
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data.keys()) - set(self.fields.keys())
+        if unexpected:
+            raise serializers.ValidationError({"unexpected_fields": sorted(unexpected)})
+        return attrs
+
+
+class VerifyFaceSerializer(serializers.Serializer):
+    session_id = serializers.UUIDField()
+    capture = FaceCaptureSerializer()
+    reason = serializers.ChoiceField(
+        choices=FaceVerificationLog.VERIFICATION_REASON_CHOICES,
+        default="VERIFY",
+    )
+
+    def validate(self, attrs):
+        unexpected = set(self.initial_data.keys()) - set(self.fields.keys())
+        if unexpected:
+            raise serializers.ValidationError({"unexpected_fields": sorted(unexpected)})
         return attrs

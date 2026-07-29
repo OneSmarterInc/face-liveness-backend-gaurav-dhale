@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import timedelta
 
 from django.utils import timezone
 
 from identity_verification.models import IdentityVerificationResult
 from .exceptions import IdentityVerificationError
+
+security_logger = logging.getLogger("security")
+
+# No HTTP request is available this deep in the pipeline, so the
+# request-scoped fields the "verbose" formatter expects are filled with
+# placeholders rather than threaded down from the view.
+_NO_REQUEST_CONTEXT = {"path": "identity_verification.services.replay_detector", "method": "INTERNAL", "duration": 0.0, "ip": "-"}
 
 
 class ReplayDetectionError(IdentityVerificationError):
@@ -60,6 +68,14 @@ class ReplayDetector:
         )
 
         if replay_detected:
+            security_logger.warning(
+                "Replay attack detected: identical evidence resubmitted",
+                extra={
+                    **_NO_REQUEST_CONTEXT,
+                    "status": "replay_detected",
+                    "user": verification_session.account_id,
+                },
+            )
             raise ReplayDetectionError(
                 "Replay attack detected."
             )
@@ -117,6 +133,14 @@ class ReplayDetector:
         """
 
         if verification_session.consumed_at is not None:
+            security_logger.warning(
+                "Replay attack detected: already-consumed session reused",
+                extra={
+                    **_NO_REQUEST_CONTEXT,
+                    "status": "session_reuse",
+                    "user": verification_session.account_id,
+                },
+            )
             raise ReplayDetectionError(
                 "Verification session has already been used."
             )

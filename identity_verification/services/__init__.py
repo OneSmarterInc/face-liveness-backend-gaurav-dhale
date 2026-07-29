@@ -40,7 +40,7 @@ CHALLENGE_SEQUENCE = [
 # Session creation
 # ==========================================================
 
-
+import secrets
 def create_identity_session(account: Account) -> IdentityVerificationSession:
 
     ttl_seconds = int(
@@ -48,7 +48,8 @@ def create_identity_session(account: Account) -> IdentityVerificationSession:
     )
 
     challenge_sequence = CHALLENGE_SEQUENCE.copy()
-    random.shuffle(challenge_sequence)
+    secrets.SystemRandom().shuffle(challenge_sequence)
+    # random.shuffle(challenge_sequence)
 
     return IdentityVerificationSession.objects.create(
         account=account,
@@ -94,8 +95,6 @@ def _persist_result(
         if context.overall_passed
         else IdentityVerificationResult.FinalResult.FAILED
     )
-
-    print("final_liveness_result",final_liveness_result)
 
     failure_reason = (
         ""
@@ -203,6 +202,12 @@ def _generate_proof(
 # ==========================================================
 
 
+from django.db import transaction
+from django.utils import timezone
+from rest_framework import serializers
+from rest_framework.exceptions import NotFound
+
+
 def complete_identity_session(
     *,
     account: Account,
@@ -214,91 +219,81 @@ def complete_identity_session(
     IdentityVerificationProof,
 ]:
     """
-    Orchestrates the complete Phase B verification flow:
+    Orchestrates the complete Phase B verification flow.
 
-        Serializer
+        Load + Lock Session
+            -> Serializer
             -> VerificationContext
             -> IdentityVerificationPipeline
-            -> Persist Results
+            -> Persist Result
             -> Generate Proof
+            -> Consume Session
             -> Return
 
-    This function intentionally contains NO validation logic of its
-    own. Every business rule lives either in a serializer field or in
-    a pipeline stage. Its only job is loading the session, wiring the
-    pieces above together in order, and returning
-    (session, result, proof).
+    All validation is delegated to either the serializer or the pipeline.
+    This function only orchestrates the flow.
     """
-
-    # ---- Load the session ----
-
-    try:
-        precheck_session = IdentityVerificationSession.objects.get(
-            id=session_id,
-            account=account,
-        )
-    except IdentityVerificationSession.DoesNotExist as exc:
-        raise NotFound("Verification session not found.") from exc
-
-    if (
-        precheck_session.expires_at <= timezone.now()
-        and not precheck_session.consumed_at
-    ):
-        IdentityVerificationSession.objects.filter(
-            id=precheck_session.id,
-        ).update(status=IdentityVerificationSession.Status.EXPIRED)
-
-        raise serializers.ValidationError(
-            {"session": "Verification session has expired."}
-        )
 
     with transaction.atomic():
 
-        session = (
-            IdentityVerificationSession.objects
-            .select_for_update()
-            .get(id=session_id, account=account)
-        )
 
-        session.attempt_count += 1
-        session.save(update_fields=["attempt_count"])
+        try:
+            session = (
+                IdentityVerificationSession.objects
+                .select_for_update()
+                .get(
+                    id=session_id,
+                    account=account,
+                )
+            )
+        except IdentityVerificationSession.DoesNotExist as exc:
+            raise NotFound("Verification session not found.") from exc
 
-        # ---- Serializer ----
-        import json
-        with open("payload.txt", "w") as f:
-            f.write(f"payload from frontnd =>\n {json.dumps(payload, indent=2)}")
+
+        if session.consumed_at:
+            raise serializers.ValidationError(
+                {"session": "Verification session has already been consumed."}
+            )
+
+        if session.status in (
+            IdentityVerificationSession.Status.COMPLETED,
+            IdentityVerificationSession.Status.FAILED,
+        ):
+            raise serializers.ValidationError(
+                {"session": "Verification session has already been completed."}
+            )
+
+        if session.expires_at <= timezone.now():
+            session.status = IdentityVerificationSession.Status.EXPIRED
+            session.save(update_fields=["status"])
+
+            raise serializers.ValidationError(
+                {"session": "Verification session has expired."}
+            )
+
+
         serializer = IdentityCompletionSerializer(
             data=payload,
             context={"session": session},
         )
         serializer.is_valid(raise_exception=True)
 
-        # ---- VerificationContext ----
+        # Count only valid completion attempts.
+        session.attempt_count += 1
+        session.save(update_fields=["attempt_count"])
 
         context = VerificationContext(
             session=session,
             payload=serializer.validated_data,
         )
 
-        # ---- IdentityVerificationPipeline ----
-        #
-        # Raises rest_framework.exceptions.ValidationError (via
-        # IdentityVerificationError -> ValidationError translation
-        # inside the pipeline) if any stage fails. That propagates
-        # straight out of this transaction, rolling it back, exactly
-        # like the old inline validation did.
-
         context = IdentityVerificationPipeline(
             context=context,
         ).execute()
 
-        # ---- Persist Results ----
-
         result, payload_hash, previous_head = _persist_result(
             context=context,
         )
-
-        # ---- Generate Proof ----
 
         proof, current_head = _generate_proof(
             session=session,
@@ -307,21 +302,20 @@ def complete_identity_session(
             previous_head=previous_head,
         )
 
-        # ---- Session bookkeeping ----
 
         session.status = (
             IdentityVerificationSession.Status.COMPLETED
-            if (
-                result.final_liveness_result
-                == IdentityVerificationResult.FinalResult.PASSED
-            )
+            if result.final_liveness_result
+            == IdentityVerificationResult.FinalResult.PASSED
             else IdentityVerificationSession.Status.FAILED
         )
+
         session.started_at = result.started_at
         session.completed_at = result.completed_at
         session.consumed_at = timezone.now()
         session.previous_head = previous_head
         session.current_head = current_head
+
         session.save(
             update_fields=[
                 "status",
@@ -332,7 +326,5 @@ def complete_identity_session(
                 "current_head",
             ]
         )
-
-        # ---- Return ----
 
         return session, result, proof

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from django.db import transaction
@@ -35,6 +37,28 @@ from accounts.totp import (
     verify_totp_code,
 )
 
+app_logger = logging.getLogger("app")
+security_logger = logging.getLogger("security")
+
+
+def _get_client_ip(request) -> str:
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
+
+
+def _log_extra(request, *, response_status, user=None, duration: float = 0.0) -> dict:
+    """Build the `extra` dict required by the app/security "verbose" formatter."""
+    return {
+        "path": request.path,
+        "method": request.method,
+        "status": response_status,
+        "duration": duration,
+        "ip": _get_client_ip(request),
+        "user": user if user is not None else getattr(request.user, "id", "anonymous"),
+    }
+
 
 def _user_has_confirmed_totp(user: User) -> bool:
     return TOTPDevice.objects.filter(user=user, confirmed_at__isnull=False).exists()
@@ -55,6 +79,11 @@ class RegisterView(APIView):
         # user, so the client can go straight into TOTP enrollment without
         # a separate /login/ call.
         refresh = RefreshToken.for_user(user)
+
+        app_logger.info(
+            "Account registered",
+            extra=_log_extra(request, response_status=status.HTTP_201_CREATED, user=user.id),
+        )
 
         return Response(
             {
@@ -94,10 +123,22 @@ class LoginView(APIView):
         )
 
         if user is None or not user.is_active:
+            security_logger.warning(
+                "Failed login attempt",
+                extra=_log_extra(
+                    request,
+                    response_status=status.HTTP_401_UNAUTHORIZED,
+                    user=serializer.validated_data["email"],
+                ),
+            )
             return Response({"detail": "Invalid email or password."}, status=status.HTTP_401_UNAUTHORIZED)
 
         if _user_has_confirmed_totp(user):
             mfa_token = create_mfa_session(user.id)
+            app_logger.info(
+                "Login step 1 succeeded, TOTP challenge issued",
+                extra=_log_extra(request, response_status=status.HTTP_200_OK, user=user.id),
+            )
             return Response(
                 {
                     "must_enroll_totp": False,
@@ -109,6 +150,10 @@ class LoginView(APIView):
             )
 
         refresh = RefreshToken.for_user(user)
+        app_logger.info(
+            "Login succeeded, TOTP enrollment still required",
+            extra=_log_extra(request, response_status=status.HTTP_200_OK, user=user.id),
+        )
         return Response(
             {
                 "must_enroll_totp": True,
@@ -130,6 +175,11 @@ class TOTPEnrollView(APIView):
         secret = generate_totp_secret()
         run_with_retry(
             lambda: TOTPDevice.objects.update_or_create(user=user, defaults={"secret": secret, "confirmed_at": None})
+        )
+
+        app_logger.info(
+            "TOTP enrollment started",
+            extra=_log_extra(request, response_status=status.HTTP_200_OK, user=user.id),
         )
 
         return Response(
@@ -155,6 +205,10 @@ class TOTPVerifyEnrollmentView(APIView):
             return Response({"detail": "TOTP is already enrolled."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not verify_totp_code(device.secret, code):
+            security_logger.warning(
+                "Invalid TOTP code during enrollment",
+                extra=_log_extra(request, response_status=status.HTTP_400_BAD_REQUEST, user=request.user.id),
+            )
             return Response({"detail": "Invalid TOTP code."}, status=status.HTTP_400_BAD_REQUEST)
 
         backup_codes = generate_backup_codes()
@@ -169,6 +223,11 @@ class TOTPVerifyEnrollmentView(APIView):
                 )
 
         run_with_retry(_confirm)
+
+        app_logger.info(
+            "TOTP enrollment confirmed",
+            extra=_log_extra(request, response_status=status.HTTP_200_OK, user=request.user.id),
+        )
 
         return Response({"backup_codes": backup_codes}, status=status.HTTP_200_OK)
 
@@ -188,12 +247,20 @@ class TOTPLoginVerifyView(APIView):
 
         user_id = get_user_id_from_mfa_token(mfa_token)
         if not user_id:
+            security_logger.warning(
+                "TOTP login attempted with expired or invalid mfa_token",
+                extra=_log_extra(request, response_status=status.HTTP_401_UNAUTHORIZED, user="anonymous"),
+            )
             return Response(
                 {"detail": "Session expired or invalid. Please log in again."},
                 status=status.HTTP_401_UNAUTHORIZED,
             )
 
         if is_totp_throttled(user_id):
+            security_logger.warning(
+                "TOTP login throttled after repeated failures",
+                extra=_log_extra(request, response_status=status.HTTP_429_TOO_MANY_REQUESTS, user=user_id),
+            )
             return Response(
                 {"detail": "Too many incorrect attempts. Please try again later."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -223,6 +290,10 @@ class TOTPLoginVerifyView(APIView):
 
         if not is_valid:
             record_totp_failure(user_id)
+            security_logger.warning(
+                "Invalid TOTP or backup code at login",
+                extra=_log_extra(request, response_status=status.HTTP_400_BAD_REQUEST, user=user_id),
+            )
             return Response({"detail": "Invalid TOTP or backup code."}, status=status.HTTP_400_BAD_REQUEST)
 
         def _mark_used():
@@ -240,6 +311,12 @@ class TOTPLoginVerifyView(APIView):
         invalidate_mfa_session(mfa_token)
 
         refresh = RefreshToken.for_user(user)
+
+        app_logger.info(
+            "Login completed (TOTP verified)",
+            extra=_log_extra(request, response_status=status.HTTP_200_OK, user=user.id),
+        )
+
         return Response(
             {
                 "access": str(refresh.access_token),
@@ -261,7 +338,16 @@ class LogoutView(APIView):
         try:
             run_with_retry(RefreshToken(refresh_token).blacklist)
         except Exception:
+            security_logger.warning(
+                "Logout attempted with invalid or already-blacklisted refresh token",
+                extra=_log_extra(request, response_status=status.HTTP_400_BAD_REQUEST, user=request.user.id),
+            )
             return Response({"detail": "Invalid or already-blacklisted refresh token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        app_logger.info(
+            "User logged out",
+            extra=_log_extra(request, response_status=status.HTTP_205_RESET_CONTENT, user=request.user.id),
+        )
 
         return Response(status=status.HTTP_205_RESET_CONTENT)
 

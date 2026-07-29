@@ -269,3 +269,10 @@ IDENTITY_VERIFICATION = {
         "max_frame_delta_roll": 2,
     },
 }
+
+from .base import LOGGING
+MIDDLEWARE += ['korgut_backend.middleware.RequestLogMiddleware']
+
+IDENTITY_ARCFACE_MODEL_PATH = (
+    BASE_DIR / "models" / "w600k_r50.onnx"
+)

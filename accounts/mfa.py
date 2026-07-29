@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import uuid
 
 from django.core.cache import cache
+
+security_logger = logging.getLogger("security")
 
 # django's default LocMemCache backend is per-process, which is fine for a
 # single `manage.py runserver` process. Running this behind multiple worker
@@ -12,6 +15,11 @@ from django.core.cache import cache
 MFA_TOKEN_TTL = 300  # seconds
 TOTP_MAX_ATTEMPTS = 5
 TOTP_LOCKOUT_TTL = 300  # seconds
+
+# No HTTP request is available this deep in the MFA layer, so the
+# request-scoped fields the "verbose" formatter expects are filled with
+# placeholders rather than threaded down from the view.
+_NO_REQUEST_CONTEXT = {"path": "mfa.record_totp_failure", "method": "INTERNAL", "duration": 0.0, "ip": "-"}
 
 
 def _token_key(token: str) -> str:
@@ -40,6 +48,11 @@ def record_totp_failure(user_id) -> int:
     key = _attempt_key(user_id)
     count = (cache.get(key) or 0) + 1
     cache.set(key, count, timeout=TOTP_LOCKOUT_TTL)
+    if count >= TOTP_MAX_ATTEMPTS:
+        security_logger.warning(
+            "TOTP account locked out after repeated failures",
+            extra={**_NO_REQUEST_CONTEXT, "status": "locked_out", "user": user_id},
+        )
     return count
 
 
