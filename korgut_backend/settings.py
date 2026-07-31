@@ -276,3 +276,4 @@ MIDDLEWARE += ['korgut_backend.middleware.RequestLogMiddleware']
 IDENTITY_ARCFACE_MODEL_PATH = (
     BASE_DIR / "models" / "w600k_r50.onnx"
 )
+DEFAULT_THRESHOLD = 0.42

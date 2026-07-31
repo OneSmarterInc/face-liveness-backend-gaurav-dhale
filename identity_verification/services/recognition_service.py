@@ -4,6 +4,8 @@ import json
 from dataclasses import asdict
 from typing import Optional, TypedDict
 
+from django.db import transaction
+from django.utils import timezone
 from rest_framework.exceptions import NotFound
 
 from accounts.models import Account
@@ -33,6 +35,18 @@ class NoRegisteredFaceError(RecognitionError):
     """Raised when verify() is called but the account has no active FaceEmbedding."""
 
 
+class SessionNotVerifiedError(RecognitionError):
+    """Raised when the session hasn't completed Phase B liveness (status != COMPLETED)."""
+
+
+class SessionExpiredError(RecognitionError):
+    """Raised when the session's expires_at has already passed."""
+
+
+class SessionAlreadyConsumedError(RecognitionError):
+    """Raised when the session has already been used for a register()/verify() call."""
+
+
 class VerificationOutcome(TypedDict):
     passed: bool
     similarity_score: float
@@ -48,16 +62,35 @@ class RecognitionService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_owned_session(account: Account, session_id) -> IdentityVerificationSession:
+    def _get_verified_session(account: Account, session_id) -> IdentityVerificationSession:
         try:
-            return IdentityVerificationSession.objects.get(id=session_id, account=account)
+            session = (
+                IdentityVerificationSession.objects
+                .select_for_update()
+                .get(id=session_id, account=account)
+            )
         except IdentityVerificationSession.DoesNotExist as exc:
             raise NotFound("Verification session not found.") from exc
 
-        # NOTE: this only checks ownership, not session status. If
-        # registration/verification should be gated on the session
-        # having already passed Phase B liveness, add that check here
-        # — this is the single place it belongs.
+        if session.status != IdentityVerificationSession.Status.COMPLETED:
+            raise SessionNotVerifiedError(
+                "Verification session has not completed liveness checks."
+            )
+
+        if session.expires_at <= timezone.now():
+            raise SessionExpiredError("Verification session has expired.")
+
+        if session.recognition_consumed_at is not None:
+            raise SessionAlreadyConsumedError(
+                "Verification session has already been used."
+            )
+
+        return session
+
+    @staticmethod
+    def _consume_session(session: IdentityVerificationSession) -> None:
+        session.recognition_consumed_at = timezone.now()
+        session.save(update_fields=["recognition_consumed_at"])
 
     @classmethod
     def _extract_embedding(
@@ -121,43 +154,46 @@ class RecognitionService:
 
     @classmethod
     def register(cls, *, account: Account, session_id, base64_image: str) -> FaceEmbedding:
-        session = cls._get_owned_session(account, session_id)
+        with transaction.atomic():
+            session = cls._get_verified_session(account, session_id)
 
-        context = VerificationContext(session=session, payload={})
+            context = VerificationContext(session=session, payload={})
 
-        try:
-            context, embedding_result = cls._extract_embedding(context, base64_image)
-        except IdentityVerificationError as exc:
-            AuditService.registration_failed(account_id=account.id, reason=str(exc))
-            raise
+            try:
+                context, embedding_result = cls._extract_embedding(context, base64_image)
+            except IdentityVerificationError as exc:
+                AuditService.registration_failed(account_id=account.id, reason=str(exc))
+                raise
 
-        encrypted = cls._encrypt_embedding(
-            account,
-            context.embedding,
-            embedding_result.model_name,
-            embedding_result.model_version,
-        )
+            encrypted = cls._encrypt_embedding(
+                account,
+                context.embedding,
+                embedding_result.model_name,
+                embedding_result.model_version,
+            )
 
-        # Only one active embedding per account at a time — a new
-        # registration supersedes the old one rather than stacking up.
-        FaceEmbedding.objects.filter(user=account, is_active=True).update(is_active=False)
+            # Only one active embedding per account at a time — a new
+            # registration supersedes the old one rather than stacking up.
+            FaceEmbedding.objects.filter(user=account, is_active=True).update(is_active=False)
 
-        face_embedding = FaceEmbedding.objects.create(
-            user=account,
-            embedding=encrypted,
-            model_name=embedding_result.model_name,
-            model_version=embedding_result.model_version,
-            embedding_dimension=embedding_result.dimension,
-            is_active=True,
-        )
+            face_embedding = FaceEmbedding.objects.create(
+                user=account,
+                embedding=encrypted,
+                model_name=embedding_result.model_name,
+                model_version=embedding_result.model_version,
+                embedding_dimension=embedding_result.dimension,
+                is_active=True,
+            )
 
-        AuditService.registration_succeeded(
-            account_id=account.id,
-            embedding_id=face_embedding.id,
-            quality=context.quality_result,
-        )
+            cls._consume_session(session)
 
-        return face_embedding
+            AuditService.registration_succeeded(
+                account_id=account.id,
+                embedding_id=face_embedding.id,
+                quality=context.quality_result,
+            )
+
+            return face_embedding
 
     # ------------------------------------------------------------------
     # Verification
@@ -174,60 +210,58 @@ class RecognitionService:
         ip_address: Optional[str] = None,
         device: str = "",
     ) -> VerificationOutcome:
-        session = cls._get_owned_session(account, session_id)
+        with transaction.atomic():
+            session = cls._get_verified_session(account, session_id)
 
-        stored = FaceEmbedding.objects.filter(user=account, is_active=True).first()
-        if stored is None:
-            raise NoRegisteredFaceError("No registered face exists for this account.")
+            stored = FaceEmbedding.objects.filter(user=account, is_active=True).first()
+            if stored is None:
+                raise NoRegisteredFaceError("No registered face exists for this account.")
 
-        context = VerificationContext(session=session, payload={})
-        context.stored_embedding = stored
+            context = VerificationContext(session=session, payload={})
+            context.stored_embedding = stored
 
-        try:
-            context, embedding_result = cls._extract_embedding(context, base64_image)
-        except IdentityVerificationError as exc:
-            AuditService.verification_attempt(
-                account_id=account.id, passed=False, score=None, reason=reason
+            try:
+                context, embedding_result = cls._extract_embedding(context, base64_image)
+            except IdentityVerificationError as exc:
+                AuditService.verification_attempt(
+                    account_id=account.id, passed=False, score=None, reason=reason
+                )
+                raise
+
+            stored_vector = cls._decrypt_embedding(stored)
+
+            similarity = SimilarityService.compare(context.embedding, stored_vector)
+            context.similarity_result = asdict(similarity)
+
+            # _get_verified_session already enforced status == COMPLETED,
+            # so liveness is known to have passed by the time we get here —
+            # no need to re-derive or mirror it off the session again.
+            verification_log = FaceVerificationLog.objects.create(
+                user=account,
+                reason=reason,
+                similarity_score=similarity.score,
+                passed=similarity.passed,
+                ip_address=ip_address,
+                device=device,
+                liveness_score=1.0,
+                liveness_passed=True,
+                challenge_sequence=session.challenge_sequence,
+                detector_provider="insightface",
+                detector_version=embedding_result.model_version,
             )
-            raise
 
-        stored_vector = cls._decrypt_embedding(stored)
+            cls._consume_session(session)
 
-        similarity = SimilarityService.compare(context.embedding, stored_vector)
-        context.similarity_result = asdict(similarity)
+            AuditService.verification_attempt(
+                account_id=account.id,
+                passed=similarity.passed,
+                score=similarity.score,
+                reason=reason,
+            )
 
-        # This flow only runs behind IsIdentityStudent-gated,
-        # authenticated endpoints tied to a session that already went
-        # through Phase B liveness, so we mirror that session's own
-        # completed/failed status here rather than re-deriving a
-        # liveness verdict — RecognitionService judges recognition
-        # only, never liveness.
-        session_passed_liveness = session.status == IdentityVerificationSession.Status.COMPLETED
-
-        verification_log = FaceVerificationLog.objects.create(
-            user=account,
-            reason=reason,
-            similarity_score=similarity.score,
-            passed=similarity.passed,
-            ip_address=ip_address,
-            device=device,
-            liveness_score=1.0 if session_passed_liveness else 0.0,
-            liveness_passed=session_passed_liveness,
-            challenge_sequence=session.challenge_sequence,
-            detector_provider="insightface",
-            detector_version=embedding_result.model_version,
-        )
-
-        AuditService.verification_attempt(
-            account_id=account.id,
-            passed=similarity.passed,
-            score=similarity.score,
-            reason=reason,
-        )
-
-        return VerificationOutcome(
-            passed=similarity.passed,
-            similarity_score=similarity.score,
-            reason=reason,
-            log_id=verification_log.id,
-        )
+            return VerificationOutcome(
+                passed=similarity.passed,
+                similarity_score=similarity.score,
+                reason=reason,
+                log_id=verification_log.id,
+            )

@@ -79,6 +79,12 @@ class EmbeddingService:
 
         normalized = vector / norm
 
+        if normalized.shape[0] != EMBEDDING_DIMENSION:
+            raise EmbeddingError(
+                "Embedding model returned a vector of dimension "
+                f"{normalized.shape[0]}, expected {EMBEDDING_DIMENSION}."
+            )
+
         return EmbeddingResult(
             embedding=normalized,
             model_name=MODEL_NAME,

@@ -31,6 +31,7 @@ class IdentityVerificationSession(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     consumed_at = models.DateTimeField(null=True, blank=True)
+    recognition_consumed_at = models.DateTimeField(null=True,blank=True)
     attempt_count = models.PositiveIntegerField(default=0)
     previous_head = models.CharField(max_length=128, blank=True, default="")
     current_head = models.CharField(max_length=128, blank=True, default="")

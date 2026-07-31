@@ -17,11 +17,11 @@ class SimilarityResult:
     passed: bool
     threshold: float
 
-
+from django.conf import settings
 class SimilarityService:
 
 
-    DEFAULT_THRESHOLD = 5.0  # cosine similarity, ArcFace-typical range
+    DEFAULT_THRESHOLD = getattr(settings, "DEFAULT_THRESHOLD", 0.5) 
 
     @classmethod
     def compare(
