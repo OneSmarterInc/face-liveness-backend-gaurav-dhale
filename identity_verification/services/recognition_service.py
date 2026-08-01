@@ -171,9 +171,6 @@ class RecognitionService:
                 embedding_result.model_name,
                 embedding_result.model_version,
             )
-
-            # Only one active embedding per account at a time — a new
-            # registration supersedes the old one rather than stacking up.
             FaceEmbedding.objects.filter(user=account, is_active=True).update(is_active=False)
 
             face_embedding = FaceEmbedding.objects.create(
@@ -233,9 +230,6 @@ class RecognitionService:
             similarity = SimilarityService.compare(context.embedding, stored_vector)
             context.similarity_result = asdict(similarity)
 
-            # _get_verified_session already enforced status == COMPLETED,
-            # so liveness is known to have passed by the time we get here —
-            # no need to re-derive or mirror it off the session again.
             verification_log = FaceVerificationLog.objects.create(
                 user=account,
                 reason=reason,

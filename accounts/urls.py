@@ -13,11 +13,3 @@ urlpatterns = [
     path("logout/", views.LogoutView.as_view(), name="auth_logout"),
     path("me/", views.CurrentUserView.as_view(), name="auth_me"),
 ]
-
-# ###-------------------------- Face Recognition - GRD --------------------------###
-
-
-# urlpatterns.extend([
-#     path("register-face/", views.RegisterFaceView.as_view(), name="register-face"),
-#     path("verify-face/", views.VerifyFaceView.as_view(), name="verify-face"),
-# ])

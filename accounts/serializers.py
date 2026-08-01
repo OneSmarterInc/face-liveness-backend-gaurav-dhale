@@ -97,25 +97,3 @@ def serialize_user(user: User) -> dict:
         "totp_enrolled": totp_enrolled,
     }
 
-
-# ###-------------------------- Face Recognition - GRD --------------------------###
-
-# MAX_FACE_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
-
-
-# class RegisterFaceSerializer(serializers.Serializer):
-#     image = serializers.ImageField()
-
-#     def validate_image(self, value):
-#         if value.size > MAX_FACE_IMAGE_SIZE:
-#             raise serializers.ValidationError("Image file too large (max 5MB)")
-#         return value
-
-
-# class VerifyFaceSerializer(serializers.Serializer):
-#     image = serializers.ImageField()
-
-#     def validate_image(self, value):
-#         if value.size > MAX_FACE_IMAGE_SIZE:
-#             raise serializers.ValidationError("Image file too large (max 5MB)")
-#         return value

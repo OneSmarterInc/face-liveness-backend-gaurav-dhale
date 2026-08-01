@@ -73,11 +73,7 @@ class RegisterView(APIView):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = run_with_retry(serializer.save)
-
-        # Auto-login on register: hand back the same kind of limited,
-        # no-refresh access token LoginView issues for a not-yet-enrolled
-        # user, so the client can go straight into TOTP enrollment without
-        # a separate /login/ call.
+        
         refresh = RefreshToken.for_user(user)
 
         app_logger.info(
@@ -94,19 +90,22 @@ class RegisterView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+    
 
+from identity_verification.models import FaceEmbedding
+
+def _get_next_authentication_step(user: User) -> str:
+    face_registered = FaceEmbedding.objects.filter(
+        user=user.account, is_active=True
+    ).exists()
+
+    return (
+        "FACE_VERIFICATION"
+        if face_registered
+        else "FACE_REGISTRATION"
+    )
 
 class LoginView(APIView):
-    """
-    Step 1 of login.
-
-    - No confirmed TOTP device yet: issue a usable access token directly
-      (no refresh token) with must_enroll_totp=True. That access token is
-      only accepted by the TOTP-gate-exempt endpoints (enroll, verify-
-      enrollment, logout, me) until enrollment completes.
-    - Confirmed TOTP device: issue an opaque mfa_token instead of any
-      tokens; the client must call /verify-totp/ next.
-    """
 
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -154,11 +153,14 @@ class LoginView(APIView):
             "Login succeeded, TOTP enrollment still required",
             extra=_log_extra(request, response_status=status.HTTP_200_OK, user=user.id),
         )
+        next_step = _get_next_authentication_step(user)
+        print("next step ===",next_step)
         return Response(
             {
                 "must_enroll_totp": True,
                 "access": str(refresh.access_token),
                 "user": serialize_user(user),
+                "next_step": next_step,
             },
             status=status.HTTP_200_OK,
         )
@@ -317,11 +319,15 @@ class TOTPLoginVerifyView(APIView):
             extra=_log_extra(request, response_status=status.HTTP_200_OK, user=user.id),
         )
 
+        next_step = _get_next_authentication_step(user)
+        print("next step ===",next_step)
+
         return Response(
             {
                 "access": str(refresh.access_token),
                 "refresh": str(refresh),
                 "user": serialize_user(user),
+                "next_step": next_step,
             },
             status=status.HTTP_200_OK,
         )
@@ -357,118 +363,3 @@ class CurrentUserView(APIView):
 
     def get(self, request):
         return Response(serialize_user(request.user), status=status.HTTP_200_OK)
-
-
-# ###-------------------------- Face Recognition - GRD --------------------------###
-
-# from .AUTH_SERVICES_GRD.services import get_single_face_embedding, FaceDetectionError,MODEL_NAME
-# from .AUTH_SERVICES_GRD.crypto import encrypt_embedding
-# from .serializers import RegisterFaceSerializer, VerifyFaceSerializer
-# from .models import FaceImage,FaceEmbedding, Account
-# from PIL import Image
-
-# class RegisterFaceView(APIView):
-
-#     permission_classes = [IsAuthenticated]
-
-#     def post(self, request):
-#         serializer = RegisterFaceSerializer(data=request.data)
-#         if not serializer.is_valid():
-#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-#         image_file = serializer.validated_data["image"]
-
-#         try:
-#             embedding, bbox = get_single_face_embedding(image_file)
-#         except FaceDetectionError as e:
-#             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-#         user = request.user
-#         user = Account.objects.filter(user=user).first()
-#         if not user: 
-#             return Response(status=status.HTTP_404_NOT_FOUND)
-#         image_file.seek(0)
-#         with Image.open(image_file) as pil_img:
-#             width, height = pil_img.size
-#         image_file.seek(0)
-
-#         with transaction.atomic():
-#             face_image, _ = FaceImage.objects.update_or_create(
-#                 user=user,
-#                 defaults={
-#                     "image": image_file,
-#                     "width": width,
-#                     "height": height,
-#                     "file_size": image_file.size,
-#                     "mime_type": image_file.content_type or "application/octet-stream",
-#                     "is_registration": True,
-#                 },
-#             )
-
-#             FaceEmbedding.objects.create(
-#                 user=user,
-#                 embedding=encrypt_embedding(embedding, str(user.id)),
-#                 model_name=MODEL_NAME,
-#             )
-
-#         return Response(
-#             {"detail": "Face registered successfully"},
-#             status=status.HTTP_201_CREATED,
-#         )
-
-# from .AUTH_SERVICES_GRD.crypto import EmbeddingCryptoError
-# from .AUTH_SERVICES_GRD.services import verify_face, FACE_VERIFICATION_THRESHOLD, NoRegisteredFaceError
-# from .models import FaceVerificationLog
-
-# def get_client_ip(request):
-#     forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
-#     if forwarded_for:
-#         return forwarded_for.split(",")[0].strip()
-#     return request.META.get("REMOTE_ADDR")
-
-# class VerifyFaceView(APIView):
-
-#     permission_classes = [IsAuthenticated]
-
-#     def post(self, request):
-#         serializer = VerifyFaceSerializer(data=request.data)
-#         if not serializer.is_valid():
-#             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-#         image_file = serializer.validated_data["image"]
-#         user = request.user
-#         user = Account.objects.filter(user=user).first()
-#         if not user: 
-#             return Response(status=status.HTTP_404_NOT_FOUND)
-
-#         try:
-#             result = verify_face(user, image_file)
-#         except NoRegisteredFaceError as e:
-#             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-#         except FaceDetectionError as e:
-#             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-#         except EmbeddingCryptoError:
-#             return Response(
-#                 {"detail": "Could not verify face; please re-register"},
-#                 status=status.HTTP_400_BAD_REQUEST,
-#             )
-
-#         score = result["score"]
-#         passed = score >= FACE_VERIFICATION_THRESHOLD
-
-#         FaceVerificationLog.objects.create(
-#             user=user,
-#             similarity_score=score,
-#             passed=passed,
-#             ip_address=get_client_ip(request),
-#             device=request.META.get("HTTP_USER_AGENT", ""),
-#         )
-
-#         response_status = status.HTTP_200_OK if passed else status.HTTP_401_UNAUTHORIZED
-#         return Response(
-#             {
-#                 "verified": passed,
-#                 "similarity_score": round(score, 4),
-#             },
-#             status=response_status,
-#         )
