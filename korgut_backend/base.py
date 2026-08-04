@@ -1,3 +1,4 @@
+import logging
 import os
 from pathlib import Path
 
@@ -5,9 +6,27 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 LOG_DIR = Path(BASE_DIR) / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
+
+class DefaultLogFieldsFilter(logging.Filter):
+  
+    defaults = {"path": "-", "method": "-", "status": "-", "duration": "-", "ip": "-", "user": "-"}
+
+    def filter(self, record):
+        for key, value in self.defaults.items():
+            if not hasattr(record, key):
+                setattr(record, key, value)
+        return True
+
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+
+    "filters": {
+        "default_log_fields": {
+            "()": "korgut_backend.base.DefaultLogFieldsFilter",
+        },
+    },
 
     "formatters": {
         "verbose": {
@@ -41,6 +60,7 @@ LOGGING = {
             "maxBytes": 5 * 1024 * 1024,  # 5MB
             "backupCount": 5,
             "formatter": "verbose",
+            "filters": ["default_log_fields"],
         },
 
         "file_security": {
@@ -50,6 +70,7 @@ LOGGING = {
             "maxBytes": 5 * 1024 * 1024,
             "backupCount": 10,
             "formatter": "verbose",
+            "filters": ["default_log_fields"],
         },
 
         "file_errors": {

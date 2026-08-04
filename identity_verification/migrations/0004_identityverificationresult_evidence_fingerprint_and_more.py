@@ -28,9 +28,4 @@ class Migration(migrations.Migration):
             field=models.BooleanField(default=False),
         ),
         migrations.RunPython(backfill_evidence_fingerprint, migrations.RunPython.noop),
-        migrations.AlterField(
-            model_name='identityverificationresult',
-            name='evidence_fingerprint',
-            field=models.CharField(db_index=True, default='', max_length=128, unique=True),
-        ),
     ]

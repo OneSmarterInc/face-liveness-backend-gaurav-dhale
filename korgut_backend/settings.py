@@ -230,6 +230,7 @@ CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://face-liveness-frontend-gaurav-dhale.vercel.app"
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -277,3 +278,25 @@ IDENTITY_ARCFACE_MODEL_PATH = (
     BASE_DIR / "models" / "w600k_r50.onnx"
 )
 DEFAULT_THRESHOLD = 0.42
+
+DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.getenv("DB_NAME"),
+            "USER": os.getenv("DB_USER"),
+            "PASSWORD": os.getenv("DB_PASSWORD"),
+            "HOST": os.getenv("DB_HOST"),
+            "PORT": os.getenv("DB_PORT"),
+            "CONN_MAX_AGE": 60,
+        }
+    }
+
+import dj_database_url
+
+DATABASES = {
+    "default": dj_database_url.parse(
+        os.getenv("SUPABSE_DATABASE_URL"),
+        conn_max_age=600,
+        ssl_require=True,
+    )
+}

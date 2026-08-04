@@ -154,7 +154,6 @@ class LoginView(APIView):
             extra=_log_extra(request, response_status=status.HTTP_200_OK, user=user.id),
         )
         next_step = _get_next_authentication_step(user)
-        print("next step ===",next_step)
         return Response(
             {
                 "must_enroll_totp": True,
@@ -174,10 +173,12 @@ class TOTPEnrollView(APIView):
         if _user_has_confirmed_totp(user):
             return Response({"detail": "TOTP is already enrolled."}, status=status.HTTP_400_BAD_REQUEST)
 
-        secret = generate_totp_secret()
-        run_with_retry(
-            lambda: TOTPDevice.objects.update_or_create(user=user, defaults={"secret": secret, "confirmed_at": None})
-        )
+        device = TOTPDevice.objects.filter(user=user).first()
+        if device is None:
+            secret = generate_totp_secret()
+            run_with_retry(lambda: TOTPDevice.objects.create(user=user, secret=secret))
+        else:
+            secret = device.secret
 
         app_logger.info(
             "TOTP enrollment started",
@@ -320,7 +321,6 @@ class TOTPLoginVerifyView(APIView):
         )
 
         next_step = _get_next_authentication_step(user)
-        print("next step ===",next_step)
 
         return Response(
             {

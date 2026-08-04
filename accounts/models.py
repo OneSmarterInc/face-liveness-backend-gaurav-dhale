@@ -26,6 +26,9 @@ class Account(models.Model):
 
     def __str__(self) -> str:
         return f"Account({self.user.email}, {self.role})"
+    
+    class Meta:
+        db_table = 'account'
 
 
 class TOTPDevice(models.Model):
@@ -39,7 +42,8 @@ class TOTPDevice(models.Model):
 
     def __str__(self) -> str:
         return f"TOTPDevice(user={self.user_id}, confirmed={bool(self.confirmed_at)})"
-
+    class Meta:
+        db_table = 'totpdevice'
 
 class TOTPBackupCode(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="totp_backup_codes")
@@ -47,11 +51,10 @@ class TOTPBackupCode(models.Model):
     used_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        ordering = ["-created_at"]
-
     def __str__(self) -> str:
         return f"TOTPBackupCode(user={self.user_id}, used={bool(self.used_at)})"
 
+    class Meta:
+        ordering = ["-created_at"]
+        db_table = 'totpbackupcode'
 
-###-------------------------- Face Recognition - GRD --------------------------###

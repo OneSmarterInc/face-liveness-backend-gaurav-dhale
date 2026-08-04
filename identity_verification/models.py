@@ -46,6 +46,9 @@ class IdentityVerificationSession(models.Model):
 
     def __str__(self) -> str:
         return f"IdentityVerificationSession({self.id}, {self.student_code}, {self.status})"
+    
+    class Meta:
+        db_table = 'identityverificationsession'
 
 
 class IdentityVerificationResult(models.Model):
@@ -86,6 +89,9 @@ class IdentityVerificationResult(models.Model):
 
     def __str__(self) -> str:
         return f"IdentityVerificationResult({self.session_id}, {self.final_liveness_result})"
+    
+    class Meta:
+        db_table = 'identityverificationresult'
 
 
 class IdentityVerificationProof(models.Model):
@@ -111,6 +117,9 @@ class IdentityVerificationProof(models.Model):
 
     def __str__(self) -> str:
         return f"IdentityVerificationProof({self.session_id}, epoch={self.signing_epoch})"
+    
+    class Meta:
+        db_table = 'identityverificationproof'
 
 
 class DeviceBiometricPreference(models.Model):
@@ -127,6 +136,9 @@ class DeviceBiometricPreference(models.Model):
 
     def __str__(self) -> str:
         return f"DeviceBiometricPreference({self.account_id}, {self.status})"
+    
+    class Meta:
+        db_table = 'devicebiometricpreference'
 
 
 ###-------------------------- Face Recognition - GRD --------------------------###
@@ -151,6 +163,9 @@ class FaceEmbedding(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+    class Meta:
+        db_table = 'faceembedding'
 
 class FaceVerificationLog(models.Model):
     VERIFICATION_REASON_CHOICES = [
@@ -196,3 +211,6 @@ class FaceVerificationLog(models.Model):
 
     class Meta:
         ordering = ["-captured_at"]
+
+    class Meta:
+        db_table = 'faceverificationlog'

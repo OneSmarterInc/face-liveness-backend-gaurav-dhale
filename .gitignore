@@ -19,3 +19,6 @@ frontend_integration_guide.md
 context_files/
 reports/
 models/
+*.zip
+*.txt
+!requirements.txt
