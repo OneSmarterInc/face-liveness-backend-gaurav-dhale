@@ -29,7 +29,7 @@ load_dotenv(BASE_DIR / ".env")
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-0zav109$orgckjm3w+%%8v!lxt&4)qv68d^w*f%@fid@_y!c83'
+SECRET_KEY = os.getenv("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -228,9 +228,9 @@ REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"]["identity"] = os.getenv("IDENTITY_THROT
 CORS_ALLOW_ALL_ORIGINS = False
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "https://face-liveness-frontend-gaurav-dhale.vercel.app"
+    host.strip()
+    for host in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+    if host.strip()
 ]
 
 CORS_ALLOW_CREDENTIALS = True
