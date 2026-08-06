@@ -307,8 +307,8 @@ def db_supabase():
     }
 
 # activate one at a time
-DATABASES = db_local() # postgres call
-#DATABASES = db_supabase() # supabase call
+# DATABASES = db_local() # postgres call
+DATABASES = db_supabase() # supabase call
 
 IDENTITY_SIGNING_PRIVATE_KEY = os.getenv(
     "IDENTITY_SIGNING_PRIVATE_KEY",
@@ -319,3 +319,24 @@ IDENTITY_SIGNING_PUBLIC_KEY = os.getenv(
     "IDENTITY_SIGNING_PUBLIC_KEY",
     default="secrets/ml_dsa_public.key",
 )
+
+###-------------------------- Deployment behind nginx --------------------------###
+
+# Served under a path prefix (e.g. /face), so Django has to build URLs and look
+# for static files there rather than at the domain root.
+FORCE_SCRIPT_NAME = os.getenv("FORCE_SCRIPT_NAME") or None
+_url_prefix = FORCE_SCRIPT_NAME or ""
+
+STATIC_URL = f"{_url_prefix}/static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = f"{_url_prefix}/media/"
+
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+
+# nginx terminates TLS, so the proxied request reaches Django as plain http.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "False") == "True"

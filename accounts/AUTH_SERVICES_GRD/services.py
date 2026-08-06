@@ -35,8 +35,14 @@ def get_face_app():
     global _face_app
     if _face_app is None:
         server_logger.info("Loading FaceAnalysis (%s) - first request in this process", MODEL_NAME)
-        _face_app = FaceAnalysis(name=MODEL_NAME)
-        _face_app.prepare(ctx_id=0, det_size=(640, 640))
+        # Only detection and recognition are used here (bbox + embedding).
+        # Loading the full pack would also pull in the 3d landmark and genderage
+        # models, ~140MB of weights this path never touches.
+        _face_app = FaceAnalysis(
+            name=MODEL_NAME,
+            allowed_modules=["detection", "recognition"],
+        )
+        _face_app.prepare(ctx_id=-1, det_size=(640, 640))
     return _face_app
 
 
