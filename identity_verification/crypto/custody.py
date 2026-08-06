@@ -5,10 +5,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Dict
 
-from django.conf import settings
-
 from identity_verification.crypto.mldsa import MLDSA44Provider
 
+from pathlib import Path
+from django.conf import settings
 
 @dataclass(frozen=True)
 class SigningKey:
@@ -54,7 +54,22 @@ class SoftwareKeyCustody(KeyCustodyBackend):
 
     def _ensure_epoch(self, epoch: int) -> SigningKey:
         if epoch not in self._keys:
-            public_key, private_key = MLDSA44Provider.keygen()
+            private_key_path = Path(settings.IDENTITY_SIGNING_PRIVATE_KEY)
+            public_key_path = Path(settings.IDENTITY_SIGNING_PUBLIC_KEY)
+
+            if not private_key_path.exists():
+                raise RuntimeError(
+                    f"Private signing key not found: {private_key_path}"
+                )
+
+            if not public_key_path.exists():
+                raise RuntimeError(
+                    f"Public signing key not found: {public_key_path}"
+                )
+
+            private_key = private_key_path.read_bytes()
+            public_key = public_key_path.read_bytes()
+            
             self._keys[epoch] = SigningKey(epoch=epoch, public_key=public_key, private_key=private_key)
         return self._keys[epoch]
 

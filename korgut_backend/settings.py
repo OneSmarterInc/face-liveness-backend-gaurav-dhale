@@ -309,3 +309,13 @@ def db_supabase():
 # activate one at a time
 DATABASES = db_local() # postgres call
 #DATABASES = db_supabase() # supabase call
+
+IDENTITY_SIGNING_PRIVATE_KEY = os.getenv(
+    "IDENTITY_SIGNING_PRIVATE_KEY",
+    default="secrets/ml_dsa_private.key",
+)
+
+IDENTITY_SIGNING_PUBLIC_KEY = os.getenv(
+    "IDENTITY_SIGNING_PUBLIC_KEY",
+    default="secrets/ml_dsa_public.key",
+)
