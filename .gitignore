@@ -22,3 +22,4 @@ models/
 *.zip
 *.txt
 !requirements.txt
+secrets/

@@ -90,6 +90,7 @@ WSGI_APPLICATION = 'korgut_backend.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# default db - sqlite3 (not in use currently)
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -279,24 +280,32 @@ IDENTITY_ARCFACE_MODEL_PATH = (
 )
 DEFAULT_THRESHOLD = 0.42
 
-DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("DB_NAME"),
-            "USER": os.getenv("DB_USER"),
-            "PASSWORD": os.getenv("DB_PASSWORD"),
-            "HOST": os.getenv("DB_HOST"),
-            "PORT": os.getenv("DB_PORT"),
-            "CONN_MAX_AGE": 60,
+def db_local():
+    # postgres db for local development purpose
+    return {
+            "default": {
+                "ENGINE": "django.db.backends.postgresql",
+                "NAME": os.getenv("DB_NAME"),
+                "USER": os.getenv("DB_USER"),
+                "PASSWORD": os.getenv("DB_PASSWORD"),
+                "HOST": os.getenv("DB_HOST"),
+                "PORT": os.getenv("DB_PORT"),
+                "CONN_MAX_AGE": 60,
+            }
         }
+
+
+def db_supabase():
+    # supabase production db
+    import dj_database_url
+    return {
+        "default": dj_database_url.parse(
+            os.getenv("SUPABSE_DATABASE_URL"),
+            conn_max_age=600,
+            ssl_require=True,
+        )
     }
 
-import dj_database_url
-
-DATABASES = {
-    "default": dj_database_url.parse(
-        os.getenv("SUPABSE_DATABASE_URL"),
-        conn_max_age=600,
-        ssl_require=True,
-    )
-}
+# activate one at a time
+DATABASES = db_local() # postgres call
+#DATABASES = db_supabase() # supabase call
