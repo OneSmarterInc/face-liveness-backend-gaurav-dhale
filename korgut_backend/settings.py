@@ -34,7 +34,11 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.getenv("ALLOWED_HOSTS", "").split(",")
+    if host.strip()
+]
 
 
 # Application definition
@@ -307,7 +311,7 @@ def db_supabase():
     }
 
 # activate one at a time
-# DATABASES = db_local() # postgres call
+#DATABASES = db_local() # postgres call
 DATABASES = db_supabase() # supabase call
 
 IDENTITY_SIGNING_PRIVATE_KEY = os.getenv(
